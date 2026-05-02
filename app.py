@@ -18,8 +18,10 @@ from typing import Any
 
 import pandas as pd
 import streamlit as st
+from dotenv import load_dotenv
 
 _APP_ROOT = Path(__file__).resolve().parent
+load_dotenv(_APP_ROOT / ".env")
 _LOGO_ASSETS_DIR = _APP_ROOT / "assets"
 _LOGO_FILENAMES = ("logo.png", "logo.jpg", "logo.jpeg", "logo.svg", "logo.webp", "brand.png")
 
@@ -264,7 +266,19 @@ def _apply_streamlit_secrets_to_env() -> None:
         except Exception:
             pass
 
-    for key in ("GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT", "GOOGLE_APPLICATION_CREDENTIALS", "FIREBASE_CREDENTIALS_JSON"):
+    for key in (
+        "GOOGLE_CLOUD_PROJECT",
+        "GCLOUD_PROJECT",
+        "GOOGLE_APPLICATION_CREDENTIALS",
+        "FIREBASE_CREDENTIALS_JSON",
+        "OAUTH_REDIRECT_BASE",
+        "OAUTH_GOOGLE_CLIENT_ID",
+        "OAUTH_GOOGLE_CLIENT_SECRET",
+        "OAUTH_GITHUB_CLIENT_ID",
+        "OAUTH_GITHUB_CLIENT_SECRET",
+        "SMART_INVENTORY_AUTH_DISABLED",
+        "SMART_INVENTORY_LOGIN_GATE",
+    ):
         try_secret(key)
 
     try:
@@ -291,6 +305,12 @@ def _apply_streamlit_secrets_to_env() -> None:
 _apply_streamlit_secrets_to_env()
 
 import streamlit.components.v1 as components
+from auth_oauth import (
+    auth_must_show_login_wall,
+    auth_render_login_screen,
+    auth_sidebar_account,
+    auth_try_finish_oauth_callback,
+)
 from database import FirestoreManager, credential_debug_info
 
 
@@ -593,6 +613,13 @@ def main() -> None:
         initial_sidebar_state="expanded",
     )
 
+    # OAuth return URL must be handled before any other UI; then sign-in page first if needed.
+    auth_try_finish_oauth_callback()
+    if auth_must_show_login_wall():
+        _inject_global_theme()
+        auth_render_login_screen(theme=_THEME)
+        st.stop()
+
     _inject_global_theme()
     _render_floating_mini_logo()
     _render_sidebar_logo()
@@ -636,6 +663,7 @@ def main() -> None:
         label_visibility="visible",
         key="main_nav",
     )
+    auth_sidebar_account(theme=t)
     _render_migration_sidebar(db)
 
     auth_stub = FirestoreManager.ensure_authenticated_user()

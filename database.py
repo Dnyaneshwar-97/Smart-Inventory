@@ -209,11 +209,26 @@ class FirestoreManager(InventoryRepository):
     # --- Firebase Auth placeholder (Streamlit session integration later) ---
     @staticmethod
     def ensure_authenticated_user() -> dict[str, Any] | None:
-        """
-        Placeholder for Firebase Authentication.
-        Returns None until wired to ID tokens / Streamlit-Authenticator / custom middleware.
-        """
-        return None
+        """OAuth user from Streamlit session when `auth_oauth` has stored a login."""
+        try:
+            import streamlit as st
+
+            from auth_oauth import auth_user
+
+            u = auth_user()
+            if not isinstance(u, dict):
+                return None
+            if not (u.get("email") or u.get("login")):
+                return None
+            return {
+                "provider": u.get("provider"),
+                "email": u.get("email"),
+                "name": u.get("name"),
+                "sub": u.get("sub"),
+                "login": u.get("login"),
+            }
+        except Exception:
+            return None
 
     @staticmethod
     def barcode_scan_placeholder(payload: Mapping[str, Any]) -> None:
