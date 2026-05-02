@@ -7,10 +7,45 @@ Configure credentials via environment variables (see README); never commit secre
 from __future__ import annotations
 
 import html
+import json
+import os
 from typing import Any
 
 import pandas as pd
 import streamlit as st
+
+
+def _apply_streamlit_secrets_to_env() -> None:
+    """Inject Streamlit Cloud / `.streamlit/secrets.toml` into os.environ before `database` imports Firebase."""
+    try:
+        sec = st.secrets
+    except Exception:
+        return
+
+    def put(key: str, val: object) -> None:
+        if val is None:
+            return
+        text = str(val).strip()
+        if text:
+            os.environ[key] = text
+
+    for key in ("GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT", "GOOGLE_APPLICATION_CREDENTIALS", "FIREBASE_CREDENTIALS_JSON"):
+        if key in sec:
+            put(key, sec[key])
+
+    if "firebase_credentials" in sec:
+        put("FIREBASE_CREDENTIALS_JSON", json.dumps(dict(sec["firebase_credentials"])))
+
+    if "gcp" in sec:
+        g = sec["gcp"]
+        if "project_id" in g and not os.environ.get("GOOGLE_CLOUD_PROJECT"):
+            put("GOOGLE_CLOUD_PROJECT", g["project_id"])
+        if "credentials_json" in g:
+            put("FIREBASE_CREDENTIALS_JSON", str(g["credentials_json"]))
+
+
+_apply_streamlit_secrets_to_env()
+
 import streamlit.components.v1 as components
 from database import FirestoreManager, credential_debug_info
 
@@ -72,8 +107,24 @@ def _section_title(text: str) -> None:
 
 
 @st.cache_resource
-def get_firestore_manager() -> FirestoreManager:
+def get_firestore_manager(*, _schema_version: str = "2026-05-streamlit-secrets") -> FirestoreManager:
+    """`_schema_version` invalidates Streamlit's cache when FirestoreManager API changes."""
+    _ = _schema_version
     return FirestoreManager()
+
+
+def _low_stock_products(db: FirestoreManager) -> list[dict[str, Any]]:
+    """Uses FirestoreManager.list_low_stock_products when present; otherwise filters client-side."""
+    getter = getattr(db, "list_low_stock_products", None)
+    if callable(getter):
+        return getter()
+    rows = [
+        r
+        for r in db.list_products()
+        if int(r.get("quantity", 0)) <= int(r.get("reorder_level", 0))
+    ]
+    rows.sort(key=lambda r: (str(r.get("name", "")), str(r.get("sku", ""))))
+    return rows
 
 
 def main() -> None:
@@ -96,7 +147,11 @@ def main() -> None:
     try:
         db = get_firestore_manager()
     except Exception as err:
-        st.error("Could not connect to Firestore. Check `.env` next to `database.py` or export these variables.")
+        st.error(
+            "Could not connect to Firestore. "
+            "Locally: use `.env`. **Streamlit Cloud:** set secrets (see README) — "
+            "at minimum `GOOGLE_CLOUD_PROJECT` and `FIREBASE_CREDENTIALS_JSON` (or `firebase_credentials`)."
+        )
         with st.expander("Credential diagnostics (no secrets shown)"):
             for k, v in credential_debug_info().items():
                 st.text(f"{k}: {v}")
@@ -114,15 +169,24 @@ def main() -> None:
     if auth_stub is not None:
         st.sidebar.caption(f"Auth hook: {auth_stub}")
 
-    tab_dash, tab_inv, tab_act = st.tabs(["Dashboard", "Inventory", "Activity log"])
+    jump_sku = st.session_state.pop("pending_sku_jump", None)
+    if jump_sku:
+        st.session_state["inv_search"] = jump_sku
+        st.session_state["main_nav"] = "Inventory"
 
-    with tab_dash:
+    section = st.radio(
+        "Section",
+        ["Dashboard", "Inventory", "Activity log"],
+        horizontal=True,
+        label_visibility="collapsed",
+        key="main_nav",
+    )
+
+    if section == "Dashboard":
         render_dashboard(db)
-
-    with tab_inv:
+    elif section == "Inventory":
         render_inventory(db)
-
-    with tab_act:
+    else:
         render_activity(db)
 
 
@@ -136,6 +200,38 @@ def render_dashboard(db: FirestoreManager) -> None:
         return
 
     _metric_cards_tailwind(float(m["total_stock_value"]), int(m["low_stock_count"]))
+
+    low_cnt = int(m["low_stock_count"])
+    if low_cnt > 0:
+        try:
+            low_rows = _low_stock_products(db)
+        except Exception as err:
+            st.exception(err)
+            low_rows = []
+        if low_rows:
+            st.markdown(
+                '<p style="color:#94a3b8;font-size:0.9rem;margin:0.75rem 0 0.25rem 0;">'
+                "Low stock — click a SKU to jump to <strong>Inventory</strong> with that item:"
+                "</p>",
+                unsafe_allow_html=True,
+            )
+            chunk_size = 4
+            for chunk_start in range(0, len(low_rows), chunk_size):
+                chunk = low_rows[chunk_start : chunk_start + chunk_size]
+                cols = st.columns(len(chunk))
+                for col, row in zip(cols, chunk, strict=True):
+                    sku = str(row.get("sku", ""))
+                    name = str(row.get("name", ""))
+                    qty = int(row.get("quantity", 0))
+                    with col:
+                        if st.button(
+                            f"{sku} · qty {qty}",
+                            key=f"jump_low_{sku}",
+                            help=name or sku,
+                            use_container_width=True,
+                        ):
+                            st.session_state["pending_sku_jump"] = sku
+                            st.rerun()
 
     _section_title("Quick search")
     q = st.text_input("Filter by SKU or name", key="dash_search", placeholder="Type to filter…")
@@ -254,22 +350,54 @@ def _render_edit_product_form(db: FirestoreManager, products: list[dict[str, Any
 def _render_stock_movement(db: FirestoreManager) -> None:
     _section_title("Stock movement (In / Out)")
     st.caption("Uses apply_stock_adjustment — same API as future POS / sync modules.")
-    m1, m2, m3, m4 = st.columns([2, 1, 1, 2])
-    mv_sku = m1.text_input("SKU", key="mv_sku")
-    mv_qty = m2.number_input("Units", min_value=1, value=1, step=1)
-    direction = m3.radio("Direction", ["IN", "OUT"], horizontal=True)
-    note_mv = m4.text_input("Note (optional)", key="mv_note")
+    st.caption(
+        "Use **Search** to narrow the list, then **Select product**—pick by name; the SKU is filled automatically."
+    )
+
+    st.text_input(
+        "Search by SKU or product name",
+        key="mv_filter",
+        placeholder="Type to filter products (live search)…",
+    )
+    try:
+        filter_q = (st.session_state.get("mv_filter") or "").strip()
+        matches = db.search_products(filter_q)
+    except Exception as err:
+        st.exception(err)
+        return
+
+    if not matches:
+        st.warning("No matching products. Add items under **Add product** or clear the search.")
+        return
+
+    labels = [f"{r.get('sku', '')} — {r.get('name', '')}" for r in matches]
+    pick_label = st.selectbox(
+        "Select product",
+        options=labels,
+        key="mv_product_select",
+        help="Shows SKU and full product name. Pick one for IN/OUT—no need to type the SKU.",
+    )
+    selected_sku = pick_label.split(" — ", 1)[0].strip() if pick_label else ""
+
+    col_units, col_dir, col_note = st.columns([1, 1, 2])
+    with col_units:
+        units = st.number_input("Units", min_value=1, value=1, step=1, key="mv_units")
+    with col_dir:
+        dir_in_out = st.radio("Direction", ["IN", "OUT"], horizontal=True, key="mv_direction")
+    with col_note:
+        note_val = st.text_input("Note (optional)", key="mv_note")
+
     if st.button("Apply movement", key="apply_mv"):
-        if not mv_sku.strip():
-            st.warning("Enter a SKU.")
+        if not selected_sku:
+            st.warning("Select a product from the list.")
         else:
             try:
                 db.apply_stock_adjustment(
-                    mv_sku.strip(),
-                    int(mv_qty),
-                    "IN" if direction == "IN" else "OUT",
+                    selected_sku,
+                    int(units),
+                    "IN" if dir_in_out == "IN" else "OUT",
                     source="ui",
-                    note=note_mv or None,
+                    note=note_val or None,
                 )
                 st.success("Movement recorded.")
                 st.rerun()
@@ -277,7 +405,7 @@ def _render_stock_movement(db: FirestoreManager) -> None:
                 st.error(str(ex))
 
     if st.button("Barcode / QR hook (demo)", key="barcode_demo"):
-        FirestoreManager.barcode_scan_placeholder({"sku_hint": mv_sku, "format": "CODE128"})
+        FirestoreManager.barcode_scan_placeholder({"sku_hint": selected_sku, "format": "CODE128"})
         st.info("Hook invoked — wire hardware/SDK here.")
 
 

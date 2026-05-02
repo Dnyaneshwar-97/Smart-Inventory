@@ -38,6 +38,19 @@ docker run --rm -p 8501:8501 \
   smart-inventory
 ```
 
+## Streamlit Community Cloud
+
+Copy [.streamlit/secrets.toml.example](.streamlit/secrets.toml.example) to `.streamlit/secrets.toml` locally, then add `FIREBASE_CREDENTIALS_JSON` as described there (never commit `secrets.toml`).
+
+The app reads **[Secrets](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/secrets-management)** before Firebase initializes. In the Cloud dashboard (or local `.streamlit/secrets.toml`), set at least:
+
+- **`GOOGLE_CLOUD_PROJECT`** — your Firebase / GCP project ID, **or**
+- **`FIREBASE_CREDENTIALS_JSON`** — the full service account JSON as a **single-line** string (the JSON includes `project_id`; that is used if the env var above is omitted).
+
+Optional nested TOML is supported: **`firebase_credentials`** (dict of service account fields) or **`gcp.project_id`** / **`gcp.credentials_json`**.
+
+Redeploy after changing secrets. Do not commit secrets.
+
 ## Deploy
 
 Use [app.yaml](app.yaml) as a **Cloud Run** (Knative) service template and push the image to Artifact Registry. Firebase App Hosting is not aimed at Streamlit; run this container on Cloud Run in the same GCP project as Firebase.

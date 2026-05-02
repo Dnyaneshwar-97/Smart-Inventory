@@ -93,17 +93,27 @@ def credential_debug_info() -> dict[str, str | bool]:
     }
 
 
+def _project_id_from_service_account(obj: Mapping[str, Any]) -> str | None:
+    pid = obj.get("project_id")
+    return str(pid).strip() if pid else None
+
+
 def _init_firebase_app() -> None:
     if firebase_admin._apps:
         return
 
-    project_id = os.environ.get("GOOGLE_CLOUD_PROJECT") or os.environ.get("GCLOUD_PROJECT")
+    env_project = (os.environ.get("GOOGLE_CLOUD_PROJECT") or os.environ.get("GCLOUD_PROJECT") or "").strip()
 
     json_blob = os.environ.get("FIREBASE_CREDENTIALS_JSON")
     if json_blob:
-        cred = credentials.Certificate(json.loads(json_blob))
-        opts = {"projectId": project_id} if project_id else {}
-        firebase_admin.initialize_app(cred, opts)
+        data = json.loads(json_blob)
+        cred = credentials.Certificate(data)
+        project_id = env_project or _project_id_from_service_account(data)
+        if not project_id:
+            raise ValueError(
+                "Set GOOGLE_CLOUD_PROJECT in Streamlit secrets (or .env), or use service account JSON that includes project_id."
+            )
+        firebase_admin.initialize_app(cred, {"projectId": project_id})
         return
 
     cred_path = _resolve_credentials_path(os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"))
@@ -114,13 +124,24 @@ def _init_firebase_app() -> None:
                 "Check GOOGLE_APPLICATION_CREDENTIALS in .env (use an absolute path)."
             )
         cred = credentials.Certificate(cred_path)
-        opts = {"projectId": project_id} if project_id else {}
-        firebase_admin.initialize_app(cred, opts)
+        if env_project:
+            project_id = env_project
+        else:
+            with Path(cred_path).open(encoding="utf-8") as f:
+                file_data = json.load(f)
+            project_id = _project_id_from_service_account(file_data)
+        if not project_id:
+            raise ValueError("Could not determine project ID from credentials file or GOOGLE_CLOUD_PROJECT.")
+        firebase_admin.initialize_app(cred, {"projectId": project_id})
         return
 
     cred = credentials.ApplicationDefault()
-    opts = {"projectId": project_id} if project_id else {}
-    firebase_admin.initialize_app(cred, opts)
+    project_id = env_project
+    if not project_id:
+        raise ValueError(
+            "Project ID is required (set GOOGLE_CLOUD_PROJECT in Streamlit secrets or environment)."
+        )
+    firebase_admin.initialize_app(cred, {"projectId": project_id})
 
 
 @runtime_checkable
@@ -290,6 +311,20 @@ class FirestoreManager(InventoryRepository):
             if qty <= reorder:
                 low_stock += 1
         return {"total_stock_value": round(total_value, 2), "low_stock_count": low_stock}
+
+    def list_low_stock_products(self) -> list[dict[str, Any]]:
+        """Products where quantity <= reorder_level (same rule as dashboard low-stock count)."""
+        rows: list[dict[str, Any]] = []
+        for doc in self._db.collection(COLLECTION_INVENTORY).stream():
+            data = doc.to_dict() or {}
+            qty = int(data.get("quantity", 0))
+            reorder = int(data.get("reorder_level", 0))
+            if qty <= reorder:
+                d = dict(data)
+                d["sku"] = doc.id
+                rows.append(d)
+        rows.sort(key=lambda r: (str(r.get("name", "")), str(r.get("sku", ""))))
+        return rows
 
     def log_movement(
         self,
