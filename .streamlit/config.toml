@@ -6,3 +6,12 @@ enableXsrfProtection = true
 
 [browser]
 gatherUsageStats = false
+
+# Warm orange shell; detailed styling in app.py CSS.
+[theme]
+base = "dark"
+primaryColor = "#ea580c"
+backgroundColor = "#120807"
+secondaryBackgroundColor = "#1c100a"
+textColor = "#fff7ed"
+font = "sans serif"
