@@ -1,0 +1,6 @@
+# Smart Inventory — pin versions for reproducible Docker/Cloud Run builds
+streamlit>=1.28.0,<2
+firebase-admin>=6.0.0,<8
+google-cloud-firestore>=2.14.0,<3
+pandas>=2.0.0,<4
+python-dotenv>=1.0.0,<2

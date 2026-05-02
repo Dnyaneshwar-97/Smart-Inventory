@@ -1,0 +1,49 @@
+# Cloud Run (Knative) service manifest — deploy Streamlit container alongside Firebase / GCP.
+# Firebase App Hosting targets web frameworks; Streamlit is deployed as a container (e.g. Cloud Run).
+#
+# Example deploy (after pushing image to Artifact Registry):
+#   gcloud run services replace app.yaml --region=YOUR_REGION
+#
+# Or one-shot:
+#   gcloud run deploy smart-inventory \
+#     --image REGION-docker.pkg.dev/PROJECT_ID/REPO/smart-inventory:TAG \
+#     --region REGION \
+#     --port 8501 \
+#     --set-env-vars GOOGLE_CLOUD_PROJECT=PROJECT_ID \
+#     --service-account YOUR_RUN_SA@PROJECT_ID.iam.gserviceaccount.com
+#
+# Use Secret Manager for FIREBASE_CREDENTIALS_JSON or rely on the Run service account + IAM.
+
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: smart-inventory
+  labels:
+    app: smart-inventory
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "0"
+        autoscaling.knative.dev/maxScale: "10"
+    spec:
+      containerConcurrency: 80
+      timeoutSeconds: 300
+      containers:
+        - image: REGION-docker.pkg.dev/PROJECT_ID/REPOSITORY/smart-inventory:latest
+          ports:
+            - name: http1
+              containerPort: 8501
+          env:
+            - name: GOOGLE_CLOUD_PROJECT
+              value: PROJECT_ID
+            # Optional: mount Secret Manager as env in Cloud Console or use secretKeyRef:
+            # - name: FIREBASE_CREDENTIALS_JSON
+            #   valueFrom:
+            #     secretKeyRef:
+            #       name: firebase-sa-json
+            #       key: latest
+          resources:
+            limits:
+              cpu: "2"
+              memory: 2Gi
