@@ -430,6 +430,46 @@ def _inject_global_theme() -> None:
   section[data-testid="stSidebar"] [data-baseweb="radio"] input {{
     accent-color: {t["primary"]} !important;
   }}
+  .si-inv-banner {{
+    margin-bottom: 1.15rem;
+    border-radius: 16px;
+    padding: 1.15rem 1.35rem 1.2rem;
+    background: linear-gradient(135deg, rgba(234,88,12,.16) 0%, rgba(18,8,7,.72) 42%, rgba(67,20,7,.58) 100%);
+    border: 1px solid rgba(234,88,12,.3);
+    box-shadow: 0 14px 40px rgba(0,0,0,.28);
+  }}
+  .si-inv-banner-title {{
+    font-size: 1.2rem;
+    font-weight: 800;
+    color: {t["sidebar_text"]};
+    letter-spacing: -0.03em;
+    margin: 0 0 0.35rem 0;
+  }}
+  .si-inv-banner-sub {{
+    font-size: 0.88rem;
+    color: {t["sidebar_muted"]};
+    line-height: 1.5;
+    margin: 0 0 0.85rem 0;
+    max-width: 46rem;
+  }}
+  .si-inv-banner-chips {{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }}
+  .si-inv-chip {{
+    display: inline-flex;
+    align-items: center;
+    padding: 6px 12px;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: {t["sidebar_text"]};
+    background: rgba(0,0,0,.22);
+    border: 1px solid rgba(255,255,255,.1);
+  }}
   .main .block-container {{
     padding-top: 1.25rem !important;
     padding-bottom: 3rem !important;
@@ -441,21 +481,39 @@ def _inject_global_theme() -> None:
     border-radius: 14px !important;
     box-shadow: 0 14px 44px rgba(0,0,0,.32) !important;
   }}
-  .stTabs [data-baseweb="tab-list"] {{
-    background: {t["tab_bg"]} !important;
-    border-radius: 12px !important;
-    padding: 6px !important;
-    gap: 4px !important;
+  section[data-testid="stMain"] .stTabs [data-baseweb="tab-list"],
+  .main .stTabs [data-baseweb="tab-list"] {{
+    background: linear-gradient(180deg, rgba(255,247,237,.98) 0%, rgba(255,237,213,.88) 100%) !important;
+    border-radius: 14px !important;
+    padding: 8px 10px !important;
+    gap: 8px !important;
+    border: 1px solid rgba(234,88,12,.22) !important;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.75), 0 8px 28px rgba(0,0,0,.12) !important;
+    margin-bottom: 0.35rem !important;
   }}
-  [data-baseweb="tab"] {{
+  section[data-testid="stMain"] [data-baseweb="tab"],
+  .main [data-baseweb="tab"] {{
     color: {t["tab_inactive"]} !important;
-    border-radius: 8px !important;
-  }}
-  [data-baseweb="tab"][aria-selected="true"] {{
-    color: {t["tab_active"]} !important;
+    border-radius: 11px !important;
+    padding: 11px 18px !important;
     font-weight: 600 !important;
-    background: {t["surface"]} !important;
-    box-shadow: 0 1px 3px rgba(0,0,0,.12) !important;
+    font-size: 0.91rem !important;
+    letter-spacing: 0.02em !important;
+    border: 1px solid transparent !important;
+    transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease !important;
+  }}
+  section[data-testid="stMain"] [data-baseweb="tab"]:hover,
+  .main [data-baseweb="tab"]:hover {{
+    background: rgba(255,255,255,.65) !important;
+    border-color: rgba(234,88,12,.15) !important;
+  }}
+  section[data-testid="stMain"] [data-baseweb="tab"][aria-selected="true"],
+  .main [data-baseweb="tab"][aria-selected="true"] {{
+    color: #9a3412 !important;
+    font-weight: 700 !important;
+    background: linear-gradient(180deg, #ffffff 0%, #fff7ed 100%) !important;
+    border: 1px solid rgba(234,88,12,.45) !important;
+    box-shadow: 0 4px 16px rgba(234,88,12,.2) !important;
   }}
   button[kind="primary"] {{
     background-color: {t["primary"]} !important;
@@ -558,6 +616,28 @@ def _section_title(text: str, *, level: str = "h3") -> None:
     fs = "1.05rem" if level == "h4" else "1.15rem"
     st.markdown(
         f'<{level} style="font-size:{fs};font-weight:600;color:{t["text"]};margin:1.1rem 0 0.55rem 0;padding-bottom:0.35rem;border-bottom:1px solid {t["border"]};letter-spacing:-0.02em;">{html.escape(text)}</{level}>',
+        unsafe_allow_html=True,
+    )
+
+
+def _inventory_workspace_banner(theme: dict[str, str]) -> None:
+    """Heading strip for the Inventory page (Catalog / Add / Edit / Movements)."""
+    t = theme
+    st.markdown(
+        f"""
+<div class="si-inv-banner">
+  <div class="si-inv-banner-title">Inventory workspace</div>
+  <p class="si-inv-banner-sub">
+    Search below, then use the tabs to work with the catalog, add products, edit or remove items, and post stock movements.
+  </p>
+  <div class="si-inv-banner-chips" aria-label="Inventory areas">
+    <span class="si-inv-chip">Catalog</span>
+    <span class="si-inv-chip">Add product</span>
+    <span class="si-inv-chip">Edit / delete</span>
+    <span class="si-inv-chip">Stock movement</span>
+  </div>
+</div>
+        """,
         unsafe_allow_html=True,
     )
 
@@ -1231,6 +1311,7 @@ def render_transfers(db: FirestoreManager) -> None:
 
 
 def render_inventory(db: FirestoreManager) -> None:
+    _inventory_workspace_banner(_THEME)
     search = st.text_input(
         "Search inventory (SKU or name)",
         key="inv_search",
